@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WarmUp - Local AI Mock Interviewer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col items-center p-6">
+  <div class="max-w-2xl w-full flex flex-col gap-4">
+    <header class="border-b border-slate-700 pb-4 flex justify-between items-center">
+      <div>
+        <h1 class="text-2xl font-bold text-indigo-400">WarmUp 🎙️</h1>
+        <p class="text-sm text-slate-400">Private, local AI mock interviewer powered by Gemma 2</p>
+      </div>
+      <div class="flex gap-2">
+        <select id="persona" class="bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200">
+          <option value="hr">HR Recruiter (STAR Method)</option>
+          <option value="tech">Staff Tech Lead (Architecture)</option>
+        </select>
+      </div>
+    </header>
+
+    <!-- Chat Box -->
+    <div id="chat" class="bg-slate-800/60 border border-slate-700 rounded-lg p-4 h-96 overflow-y-auto flex flex-col gap-3">
+      <div class="bg-slate-700/50 p-3 rounded-lg text-sm text-slate-300">
+        👋 Welcome! Click <strong>"Start Interview"</strong>. Make sure Ollama is running locally with <code class="bg-slate-800 px-1 py-0.5 rounded text-indigo-300">ollama run gemma2:2b</code>.
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="flex flex-col gap-3">
+      <div class="flex gap-2">
+        <input id="textInput" type="text" placeholder="Speak or type your answer..." class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500" />
+        <button id="sendBtn" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg font-medium text-sm transition">Send</button>
+      </div>
+      
+      <div class="flex justify-between items-center">
+        <div class="flex gap-2">
+          <button id="micBtn" class="bg-slate-800 hover:bg-slate-700 border border-slate-600 px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition">
+            🎤 <span>Start Mic</span>
+          </button>
+          <button id="startBtn" class="bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded-lg text-sm font-medium transition">
+            Start Interview
+          </button>
+        </div>
+        <button id="scoreBtn" class="bg-amber-600 hover:bg-amber-500 px-4 py-2 rounded-lg text-sm font-medium transition">
+          Finish & Score
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const chat = document.getElementById('chat');
+    const textInput = document.getElementById('textInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const micBtn = document.getElementById('micBtn');
+    const startBtn = document.getElementById('startBtn');
+    const scoreBtn = document.getElementById('scoreBtn');
+    const personaSelect = document.getElementById('persona');
+
+    let history = [];
+    let isListening = false;
+
+    const PERSONAS = {
+      hr: `You are Sarah, a warm HR Recruiter. Interview the candidate using behavioral STAR questions. Keep responses under 50 words. Ask one question at a time.`,
+      tech: `You are Alex, a Staff Engineer. Ask technical questions focusing on scalability, trade-offs, and edge cases. Keep responses under 50 words.`
+    };
+
+    function appendMessage(role, text) {
+      const msg = document.createElement('div');
+      msg.className = role === 'user' 
+        ? 'bg-indigo-900/60 border border-indigo-700/50 p-3 rounded-lg text-sm self-end max-w-[85%]'
+        : 'bg-slate-700/60 border border-slate-600/50 p-3 rounded-lg text-sm self-start max-w-[85%]';
+      msg.innerHTML = `<strong>${role === 'user' ? 'You' : 'Interviewer'}:</strong> ${text}`;
+      chat.appendChild(msg);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function speak(text) {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 1.0;
+        window.speechSynthesis.speak(utterance);
+      }
+    }
+
+    async function callOllama(prompt, customSystem = null) {
+      const systemPrompt = customSystem || PERSONAS[personaSelect.value];
+      history.push({ role: 'user', content: prompt });
+
+      try {
+        const res = await fetch('http://localhost:11434/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gemma2:2b',
+            messages: [{ role: 'system', content: systemPrompt }, ...history],
+            stream: false
+          })
+        });
+        const data = await res.json();
+        const reply = data.message.content;
+        history.push({ role: 'assistant', content: reply });
+        return reply;
+      } catch (err) {
+        return "Error connecting to local Ollama. Please ensure `ollama serve` is running on your machine.";
+      }
+    }
+
+    async function handleSend() {
+      const text = textInput.value.trim();
+      if (!text) return;
+      textInput.value = '';
+      appendMessage('user', text);
+      const reply = await callOllama(text);
+      appendMessage('assistant', reply);
+      speak(reply);
+    }
+
+    sendBtn.addEventListener('click', handleSend);
+    textInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSend(); });
+
+    startBtn.addEventListener('click', async () => {
+      history = [];
+      chat.innerHTML = '';
+      const introPrompt = "Start the interview now with a friendly greeting and your first question.";
+      const reply = await callOllama(introPrompt);
+      appendMessage('assistant', reply);
+      speak(reply);
+    });
+
+    scoreBtn.addEventListener('click', async () => {
+      const scoringPrompt = "Review all the candidate answers above. Give a score from 1-10 on Clarity, STAR method adherence, and list 2 key improvement tips.";
+      const score = await callOllama(scoringPrompt, "You are an executive hiring coach providing a post-interview evaluation report.");
+      appendMessage('assistant', `📊 <strong>Evaluation Scorecard:</strong><br>${score}`);
+      speak("Here is your evaluation scorecard.");
+    });
+
+    // Web Speech API for Microphone
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      recognition.onresult = (e) => {
+        textInput.value = e.results[0][0].transcript;
+        handleSend();
+      };
+
+      recognition.onend = () => {
+        isListening = false;
+        micBtn.innerHTML = "🎤 <span>Start Mic</span>";
+      };
+
+      micBtn.addEventListener('click', () => {
+        if (!isListening) {
+          recognition.start();
+          isListening = true;
+          micBtn.innerHTML = "🔴 <span>Listening...</span>";
+        } else {
+          recognition.stop();
+        }
+      });
+    } else {
+      micBtn.disabled = true;
+      micBtn.title = "Speech recognition not supported in this browser. Use Chrome/Edge.";
+    }
+  </script>
+</body>
+</html>
